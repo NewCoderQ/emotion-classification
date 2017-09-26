@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # @Author: Zhiqiang
 # @Date:   2017-09-25 18:28:16
-# @Last Modified by:   Zhiqiang
-# @Last Modified time: 2017-09-26 13:56:34
+# @Last Modified by:   funny_QZQ
+# @Last Modified time: 2017-09-26 16:58:12
 
 import jieba 	# 结巴分词
 import xlrd
@@ -36,6 +36,7 @@ def get_maxlen_wordfreqs():
 	num_rows = sheet1.nrows 			# get the line number
 	for i in range(1, num_rows):		# 遍历每一行,除去第一行的标题
 		line = sheet1.cell(i, 1).value
+		print(line)
 		line = line.replace(' ', '')	# 去除句中的空格
 		words = list(jieba.cut(line))
 		if len(words) > maxlen:
@@ -152,9 +153,16 @@ def built_net(xtrain, xtest, ytrain, ytest, vocab_size, index2word):
 
 	'''
 		The fourth layer: Applies an activation function to an output.
+			添加一个sigmoid层，将输出归一化到0-1之间
 	'''
-	model.add(Activation("sigmoid"))
-	model.compile(loss="binary_crossentropy", optimizer="adam",metrics=["accuracy"])
+	model.add(Activation("sigmoid"))	# 1 / (1 + exp(-x))
+
+	'''
+		Configures the learning process
+		loss: loss function
+			  binary_crossentropy: Binary crossentropy between an output tensor and a target tensor
+	'''
+	model.compile(loss="binary_crossentropy", optimizer="adam", metrics=["accuracy"])
 	# 网络训练
 	print('training...')
 	model.fit(xtrain, ytrain, batch_size=BATCH_SIZE, epochs=NUM_EPOCHS,validation_data=(xtest, ytest))
@@ -172,7 +180,7 @@ def built_net(xtrain, xtest, ytrain, ytest, vocab_size, index2word):
 	#     print(' {}      {}     {}'.format(int(round(ypred)), int(ylabel), sent))
 
 
-def test(str, word2index):
+def test(file_obj, word2index):
 	model = load_model('../model/model.h5')
 	words = jieba.cut(str)
 	seqs = []
@@ -190,5 +198,5 @@ def test(str, word2index):
 if __name__ == '__main__':
 	word_freqs, sheet = get_maxlen_wordfreqs()
 	xtrain, xtest, ytrain, ytest, vocab_size, index2word, word2index = data_prepare(word_freqs, sheet)
-	built_net(xtrain, xtest, ytrain, ytest, vocab_size, index2word)
-	# test('OPPO和vivo充气人偶这场决斗太激烈 华为惨遭调戏', word2index)
+	# built_net(xtrain, xtest, ytrain, ytest, vocab_size, index2word)
+	test(sheet, word2index)
