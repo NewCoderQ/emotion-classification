@@ -1,3 +1,6 @@
 *xlsx
 model/*
+*.csv
 src_code/log*
+word2index/*
+src_code/test.py

@@ -2,12 +2,14 @@
 # @Author: Zhiqiang
 # @Date:   2017-09-25 18:28:16
 # @Last Modified by:   funny_QZQ
-# @Last Modified time: 2017-09-26 16:58:12
+# @Last Modified time: 2017-09-26 20:18:44
 
 import jieba 	# 结巴分词
 import xlrd
 import numpy as np
 import collections
+import pickle
+import random
 
 from keras.preprocessing import sequence
 from sklearn.model_selection import train_test_split
@@ -16,7 +18,7 @@ from keras.layers.embeddings import Embedding
 from keras.layers.recurrent import LSTM
 from keras.models import Sequential, load_model
 
-MAX_FEATURES = 34000	# the frequence of words
+MAX_FEATURES = 9000	# the frequence of words
 MAX_SENTENCE_LENGTH = 40 	# the max length of sentence
 
 def get_maxlen_wordfreqs():
@@ -31,12 +33,11 @@ def get_maxlen_wordfreqs():
 	word_freqs = collections.Counter()		# word counter
 	num_rows_counter = 0	# 句子的行数
 
-	workbook = xlrd.open_workbook('../1.xlsx')	# open the xlsx file
+	workbook = xlrd.open_workbook('../train1-1.xlsx')	# open the xlsx file
 	sheet1 = workbook.sheet_by_index(0)	# 获取第一张表对象
 	num_rows = sheet1.nrows 			# get the line number
 	for i in range(1, num_rows):		# 遍历每一行,除去第一行的标题
 		line = sheet1.cell(i, 1).value
-		print(line)
 		line = line.replace(' ', '')	# 去除句中的空格
 		words = list(jieba.cut(line))
 		if len(words) > maxlen:
@@ -57,12 +58,15 @@ def data_prepare(word_freqs, sheet):
 	'''
 	print('preparing data...')
 	vocab_size = min(MAX_FEATURES, len(word_freqs)) + 2 	# the length of the word dict
-	# generate the word to index dict length is 34002
+	# generate the word to index dict length is 30002
 	word2index = {x[0]: i + 2 for i, x in enumerate(word_freqs.most_common(MAX_FEATURES))}
 	# print(word_freqs)
 	# print(word2index['华为'])
 	word2index['PAD'] = 0 		# padding 
 	word2index['UNK'] = 1
+	# 将word2index写入到文件中
+	with open('../word2index/word2index.pkl', 'wb') as w2i_file:
+		pickle.dump(word2index, w2i_file)
 	# index to word
 	index2word = {v:k for k, v in word2index.items()}
 	num_rows = sheet.nrows
@@ -84,6 +88,12 @@ def data_prepare(word_freqs, sheet):
 		x[i] = seqs
 		y[i] = label
 		i += 1
+	# print(x.size)
+	# print(y.size)
+	# print(len(np.where(y > 0)[0]))
+
+	# 选取6000条正样本以及5000+条负样本进行训练
+	# negative_label_index = np.where(y == 0)[0]	# 获取负样本的索引
 	
 	# sentence padding
 	x = sequence.pad_sequences(x, maxlen = MAX_SENTENCE_LENGTH)
@@ -179,24 +189,87 @@ def built_net(xtrain, xtest, ytrain, ytest, vocab_size, index2word):
 	#     sent = " ".join([index2word[x] for x in xtest[0] if x != 0])
 	#     print(' {}      {}     {}'.format(int(round(ypred)), int(ylabel), sent))
 
+def load_test_data(excel_name):
+	workbook = xlrd.open_workbook('../' + excel_name)	# open the xlsx file
+	sheet1 = workbook.sheet_by_index(0)	# 获取第一张表对象
+	return sheet1
 
-def test(file_obj, word2index):
+def test(file_obj):
+	print('loading word2index done!')
+	with open('../word2index/word2index.pkl', 'rb') as r_file:
+		word2index = pickle.load(r_file)
+	print('Done!')
+	print('loading model')
 	model = load_model('../model/model.h5')
-	words = jieba.cut(str)
-	seqs = []
-	for word in words:
-		if word in word2index:
-			seqs.append(word2index[word])
-		else:
-			seqs.append(1)
-	x = np.empty(1, dtype = list)
-	x[0] = seqs
+	print('Done!')
+
+	num_rows = file_obj.nrows 			# get the line number
+	print('num_rows:', num_rows)
+	x = np.empty(num_rows - 1, dtype = list)
+	y = np.zeros(num_rows - 1)
+	index = 0
+	for i in range(1, num_rows):		# 遍历每一行,除去第一行的标题
+		line = file_obj.cell(i, 1).value 	# get context
+		label = 1 if file_obj.cell(index, 2).value == '中立' else 0
+		line = line.replace(' ', '')	# 去除句中的空格
+		words = list(jieba.cut(line))
+
+		seqs = []
+		for word in words:
+			if word in word2index:
+				seqs.append(word2index[word])
+			else:
+				seqs.append(1)
+		x[index] = seqs
+		y[index] = label
+		index += 1
 	# model.add(Embedding(vocab_size, 128, input_length = MAX_SENTENCE_LENGTH))
 	x = sequence.pad_sequences(x, maxlen = MAX_SENTENCE_LENGTH)
-	print(model.predict(x))
+	return model.predict(x), y
+
+def evaluate(y_pred, y_true):
+	print(y_pred.shape, y_true.shape)
+	assert y_pred.size == y_true.size
+
+	sum_true = 0
+	sum_negative = 0
+	sum_negative_true = 0
+	sum_positive_true = 0
+	sum_positive = 0
+
+	for index_row in range(y_true.shape[0]):
+		# label
+		y_pred_single = 1 if y_pred[index_row][0] >= 0.001 else 0
+		# all true
+		if y_pred_single == y_true[index_row]:	# 正确
+			sum_true += 1
+		# negative true
+		if y_true[index_row] == 0 and y_pred_single == 0:
+			sum_negative_true += 1
+		# sum of negative
+		if y_true[index_row] == 0:
+			sum_negative += 1
+
+		# positive
+		if y_true[index_row] == 1 and y_pred_single == 1:
+			sum_positive_true += 1
+		# sum of negative
+		if y_true[index_row] == 1:
+			sum_positive += 1
+
+	# all
+	all_acc = sum_true / float(y_true.shape[0])
+	# negative
+	negative_acc = sum_negative_true / float(sum_negative)
+	# positive
+	positive_acc = sum_positive_true / float(sum_positive)
+	print('all_acc:', all_acc)
+	print('positive_acc:', positive_acc)
+	print('negative_acc:', negative_acc)
 
 if __name__ == '__main__':
-	word_freqs, sheet = get_maxlen_wordfreqs()
-	xtrain, xtest, ytrain, ytest, vocab_size, index2word, word2index = data_prepare(word_freqs, sheet)
+	# word_freqs, sheet = get_maxlen_wordfreqs()
+	# xtrain, xtest, ytrain, ytest, vocab_size, index2word, word2index = data_prepare(word_freqs, sheet)
 	# built_net(xtrain, xtest, ytrain, ytest, vocab_size, index2word)
-	test(sheet, word2index)
+	y_pred, y_true = test(load_test_data('test.xlsx'))
+	evaluate(y_pred, y_true)
